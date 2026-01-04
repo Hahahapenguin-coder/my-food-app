@@ -31,15 +31,15 @@ if not check_password():
 JST = datetime.timezone(datetime.timedelta(hours=9), 'JST')
 
 try:
-    # APIキー設定
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
     
-    # ★ここが決定版：最新の「Gemini 1.5 Flash」を使用
-    # このモデルは画像もテキストも両方理解できます
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # ★ここが変更点：確実に動く「ベテランモデル」を採用
+    # 画像認識には「gemini-pro-vision」
+    model_vision = genai.GenerativeModel('gemini-pro-vision')
+    # テキスト生成には「gemini-pro」
+    model_text = genai.GenerativeModel('gemini-pro')
     
-    # スプレッドシート設定
     SHEET_NAME = st.secrets["SHEET_NAME"]
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -47,7 +47,7 @@ try:
     client = gspread.authorize(creds)
     sheet = client.open(SHEET_NAME).sheet1
 except Exception as e:
-    st.error(f"起動エラー: 設定を確認してください。\n詳細: {e}")
+    st.error(f"起動エラー: {e}")
     st.stop()
 
 # ヘッダー確認
@@ -60,33 +60,33 @@ except:
 # --- AI分析関数 ---
 
 def analyze_meal(image, meal_type):
-    """食事画像を分析して栄養素と点数を出す"""
+    """食事画像を分析して栄養素と点数を出す（Visionモデル）"""
     prompt = f"""
-    あなたはプロの管理栄養士です。
     この料理画像（{meal_type}）を見て、栄養素を推測し、JSON形式のみを出力してください。
-    Markdownのバッククォートは不要です。
+    Markdownは不要です。
     "score"には、ダイエットの観点から見た点数（0〜100点）を入れてください。
     
     {{
-        "menu": "具体的な料理名",
+        "menu": "料理名",
         "calories": 0,
         "protein": 0.0,
         "fat": 0.0,
         "carbs": 0.0,
         "score": 0,
-        "advice": "短く的確なアドバイス"
+        "advice": "短いアドバイス"
     }}
     """
     try:
-        response = model.generate_content([prompt, image])
+        # 画像用モデルを使用
+        response = model_vision.generate_content([prompt, image])
         text = re.sub(r"```json|```", "", response.text).strip()
         return json.loads(text)
     except Exception as e:
-        st.error(f"AI分析エラー: {e}")
+        st.error(f"分析エラー: {e}")
         return None
 
 def get_next_meal_advice(todays_df):
-    """次の食事のアドバイス"""
+    """次の食事のアドバイス（Textモデル）"""
     summary_text = todays_df.to_string(columns=['種別', 'メニュー名', 'カロリー(kcal)', 'タンパク質(g)'], index=False)
     prompt = f"""
     ユーザーの今日の食事記録：
@@ -94,11 +94,12 @@ def get_next_meal_advice(todays_df):
     
     これを踏まえて、次の食事で摂るべきもの、控えるべきものを150文字以内でアドバイスしてください。
     """
-    response = model.generate_content(prompt)
+    # テキスト用モデルを使用
+    response = model_text.generate_content(prompt)
     return response.text
 
 def analyze_daily_summary(date_str):
-    """1日の総合評価"""
+    """1日の総合評価（Textモデル）"""
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
     
@@ -110,7 +111,7 @@ def analyze_daily_summary(date_str):
     meals = todays_df[todays_df['種別'].isin(['朝食', '昼食', '夕食', '間食'])]
     
     if meals.empty:
-        return None, "食事データなし"
+        return None, "データなし"
 
     summary_text = meals.to_string(columns=['種別', 'メニュー名', 'カロリー(kcal)', 'タンパク質(g)', '点数'], index=False)
     
@@ -125,7 +126,8 @@ def analyze_daily_summary(date_str):
     }}
     """
     try:
-        response = model.generate_content(prompt)
+        # テキスト用モデルを使用
+        response = model_text.generate_content(prompt)
         text = re.sub(r"```json|```", "", response.text).strip()
         return json.loads(text), "OK"
     except Exception as e:
@@ -133,7 +135,7 @@ def analyze_daily_summary(date_str):
 
 # --- UI構築 ---
 
-st.title("🍽️ AI食事管理トレーナー (Reborn)")
+st.title("🍽️ AI食事管理 (Stable Ver.)")
 
 # カレンダー
 st.sidebar.header("📅 カレンダー")
