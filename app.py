@@ -1,4 +1,28 @@
 import streamlit as st
+import sys
+import subprocess
+import time
+
+# --- 【最終奥義】強制アップデート機能 ---
+# サーバーが古い辞書を使おうとするのを、力技でねじ伏せて最新版にします。
+try:
+    import google.generativeai
+    # 現在のバージョンを確認（デバッグ用）
+    # st.write(f"Current version: {google.generativeai.__version__}")
+except ImportError:
+    pass
+
+# 強制的にpip installを実行（セッションごとに1回だけ実行）
+if "fixed_env" not in st.session_state:
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "google-generativeai>=0.8.3"])
+        st.session_state.fixed_env = True
+        # インストール後にリロードが必要な場合があるため、念のため待機
+        time.sleep(1)
+    except Exception as e:
+        st.error(f"強制アップデート失敗: {e}")
+
+# --- ここからいつものインポート ---
 import google.generativeai as genai
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -34,7 +58,7 @@ try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
     
-    # ★ここを「lat」付きの確実な名前に変更しました
+    # ★モデル設定：ここはシンプルに「gemini-1.5-flash」でOK
     model = genai.GenerativeModel('gemini-1.5-flash')
     
     SHEET_NAME = st.secrets["SHEET_NAME"]
@@ -94,7 +118,7 @@ def get_next_meal_advice(todays_df):
     return response.text
 
 def analyze_daily_summary(date_str, force=False):
-    """その日の総合評価を行う（force=Trueなら3食揃ってなくても実行）"""
+    """その日の総合評価を行う"""
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
     
