@@ -20,6 +20,7 @@ def check_password():
     st.title("🔒 ログイン")
     password = st.text_input("パスワードを入力してください", type="password")
     
+    # Secretsの APP_PASSWORD と一致するか確認
     if st.button("ログイン"):
         if password == st.secrets["APP_PASSWORD"]:
             st.session_state.password_correct = True
@@ -28,6 +29,7 @@ def check_password():
             st.error("パスワードが違います")
     return False
 
+# パスワードが合っていなければここでストップ
 if not check_password():
     st.stop()
 
@@ -37,16 +39,17 @@ if not check_password():
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
+    # ひろさんの環境に合わせて最新モデルを指定
     model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
     st.error("APIキーの設定が読み込めません。Streamlit Secretsを確認してください。")
     st.stop()
 
-# 2. スプレッドシートの設定 (プランB: JSON文字列として読み込む)
+# 2. スプレッドシートの設定 (ここが修正ポイント！GCP_JSONを使う)
 try:
     SHEET_NAME = st.secrets["SHEET_NAME"]
     
-    # ★ここが変更点：Secretsの "GCP_JSON" という項目を読み込む
+    # ★重要：Secretsの "GCP_JSON" を文字列として読み込み、JSONに変換
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
     
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -58,12 +61,17 @@ except Exception as e:
     st.stop()
 
 # 初期化：ヘッダー行がなければ作成
-if not sheet.get_all_values():
-    sheet.append_row(["日付", "時刻", "種別", "メニュー名", "カロリー(kcal)", "タンパク質(g)", "脂質(g)", "炭水化物(g)", "アドバイス"])
+try:
+    if not sheet.get_all_values():
+        sheet.append_row(["日付", "時刻", "種別", "メニュー名", "カロリー(kcal)", "タンパク質(g)", "脂質(g)", "炭水化物(g)", "アドバイス"])
+except Exception as e:
+    # シートが完全に空の場合のエラー回避
+    pass
 
 # --- 関数たち ---
 
 def get_food_info(image):
+    """画像から栄養素をJSONで取得する"""
     prompt = """
     この料理の栄養素を推測し、以下のJSON形式のみを出力してください。
     Markdownのバッククォートは不要です。数値は概算で構いません。
@@ -77,17 +85,21 @@ def get_food_info(image):
     """
     response = model.generate_content([prompt, image])
     text = response.text
+    # JSON部分だけ綺麗に取り出す処理
     text = re.sub(r"```json|```", "", text).strip()
     return json.loads(text)
 
 def get_todays_advice(current_data):
+    """今日の履歴を読み込んでアドバイスをもらう"""
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
     
+    # データがない、または列が足りない場合の対策
     if df.empty or 'カロリー(kcal)' not in df.columns:
         total_cal = current_data['calories']
         total_pro = current_data['protein']
     else:
+        # 今日の日付のデータだけ抽出
         today = datetime.date.today().strftime('%Y-%m-%d')
         if '日付' in df.columns:
             df['日付'] = df['日付'].astype(str)
@@ -95,6 +107,7 @@ def get_todays_advice(current_data):
         else:
             todays_df = pd.DataFrame()
 
+        # 合計を計算
         current_cal = pd.to_numeric(todays_df['カロリー(kcal)'], errors='coerce').sum()
         current_pro = pd.to_numeric(todays_df['タンパク質(g)'], errors='coerce').sum()
         
@@ -139,10 +152,14 @@ if img_file:
     if st.button("記録してアドバイスをもらう"):
         with st.spinner("AIが考え中..."):
             try:
+                # 1. 画像解析
                 food_data = get_food_info(image)
                 st.success(f"解析完了！: {food_data['menu']}")
+                
+                # 2. アドバイス生成
                 advice = get_todays_advice(food_data)
                 
+                # 3. スプレッドシートに保存
                 now = datetime.datetime.now()
                 row = [
                     now.strftime('%Y-%m-%d'),
@@ -160,6 +177,7 @@ if img_file:
                 st.balloons()
                 st.markdown(f"### 📊 診断結果\n{advice}")
                 
+                # 今日のデータを表示
                 st.write("---")
                 st.write("今日の記録一覧:")
                 latest_data = sheet.get_all_records()
