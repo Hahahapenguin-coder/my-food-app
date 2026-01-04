@@ -36,7 +36,7 @@ try:
     
     # ★ここが変更点：確実に動く「ベテランモデル」を採用
     # 画像認識には「gemini-pro-vision」
-    model_vision = genai.GenerativeModel('gemini-pro-vision')
+    model_vision = genai.GenerativeModel('gemini-pro')
     # テキスト生成には「gemini-pro」
     model_text = genai.GenerativeModel('gemini-pro')
     
