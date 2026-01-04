@@ -237,4 +237,25 @@ try:
             # 合計カロリー計算（日次評価の行や欠食は除外して計算）
             numeric_cols = ["カロリー(kcal)", "タンパク質(g)"]
             for col in numeric_cols:
-                day_data[col] = pd.to_numeric(day_data[col], errors
+                # ★ここが修正済みの行です
+                day_data[col] = pd.to_numeric(day_data[col], errors='coerce').fillna(0)
+            
+            # 通常の食事のみ合計する
+            meals_only = day_data[day_data['種別'] != '日次評価']
+            total_cal = meals_only["カロリー(kcal)"].sum()
+            total_pro = meals_only["タンパク質(g)"].sum()
+            
+            st.markdown(f"**合計: {int(total_cal)} kcal / タンパク質 {total_pro:.1f} g**")
+            
+            # 日次評価があれば目立たせて表示
+            daily_summary = day_data[day_data['種別'] == '日次評価']
+            if not daily_summary.empty:
+                score = daily_summary.iloc[0]['点数']
+                advice = daily_summary.iloc[0]['アドバイス']
+                st.info(f"🏆 **この日の総合評価: {score}点**\n\n{advice}")
+        else:
+            st.write("この日の記録はありません。")
+    else:
+        st.write("データがまだありません。")
+except Exception as e:
+    st.error(f"データ読み込みエラー: {e}")
