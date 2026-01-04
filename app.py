@@ -35,6 +35,12 @@ try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
     
+    # ここ！位置（インデント）を左に合わせすぎないように注意です
+    model = genai.GenerativeModel('gemini-flash-latest')
+    
+    SHEET_NAME = st.secrets["SHEET_NAME"]
+    credentials_dict = json.loads(st.secrets["GCP_JSON"])
+    
     # ★安定稼働の 1.5-flash を採用
    model = genai.GenerativeModel('gemini-flash-latest')
     
