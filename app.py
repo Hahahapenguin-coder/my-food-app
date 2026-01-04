@@ -40,7 +40,7 @@ try:
     genai.configure(api_key=API_KEY)
     
     # ★ご指定の Gemini 2.5 Flash
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     SHEET_NAME = st.secrets["SHEET_NAME"]
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
