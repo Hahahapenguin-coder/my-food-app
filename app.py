@@ -1,28 +1,4 @@
 import streamlit as st
-import sys
-import subprocess
-import time
-
-# --- 【最終奥義】強制アップデート機能 ---
-# サーバーが古い辞書を使おうとするのを、力技でねじ伏せて最新版にします。
-try:
-    import google.generativeai
-    # 現在のバージョンを確認（デバッグ用）
-    # st.write(f"Current version: {google.generativeai.__version__}")
-except ImportError:
-    pass
-
-# 強制的にpip installを実行（セッションごとに1回だけ実行）
-if "fixed_env" not in st.session_state:
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "google-generativeai>=0.8.3"])
-        st.session_state.fixed_env = True
-        # インストール後にリロードが必要な場合があるため、念のため待機
-        time.sleep(1)
-    except Exception as e:
-        st.error(f"強制アップデート失敗: {e}")
-
-# --- ここからいつものインポート ---
 import google.generativeai as genai
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -58,8 +34,11 @@ try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
     
-    # ★モデル設定：ここはシンプルに「gemini-1.5-flash」でOK
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # ★ここが変更点：古い環境でも動く「二刀流」設定
+    # 画像認識用（ちょっと前のモデルだけど確実）
+    model_vision = genai.GenerativeModel('gemini-pro-vision')
+    # テキスト会話用
+    model_text = genai.GenerativeModel('gemini-pro')
     
     SHEET_NAME = st.secrets["SHEET_NAME"]
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
@@ -81,7 +60,7 @@ except:
 # --- AI分析関数 ---
 
 def analyze_meal(image, meal_type):
-    """食事画像を分析して栄養素と点数を出す"""
+    """食事画像を分析して栄養素と点数を出す（Visionモデル使用）"""
     prompt = f"""
     この料理（{meal_type}）の栄養素を推測し、以下のJSON形式のみを出力してください。
     Markdownは不要です。
@@ -97,13 +76,13 @@ def analyze_meal(image, meal_type):
         "advice": "短いアドバイス"
     }}
     """
-    response = model.generate_content([prompt, image])
+    # 画像用モデルを使用
+    response = model_vision.generate_content([prompt, image])
     text = re.sub(r"```json|```", "", response.text).strip()
     return json.loads(text)
 
 def get_next_meal_advice(todays_df):
-    """今の栄養摂取状況から、次の食事のアドバイスをする"""
-    # データの整理
+    """今の栄養摂取状況から、次の食事のアドバイスをする（Textモデル使用）"""
     summary_text = todays_df.to_string(columns=['種別', 'メニュー名', 'カロリー(kcal)', 'タンパク質(g)'], index=False)
     
     prompt = f"""
@@ -114,11 +93,12 @@ def get_next_meal_advice(todays_df):
     これを踏まえて、「次の食事で何を食べるべきか」のアドバイスを150文字以内で具体的に提案してください。
     （例：タンパク質が足りないので鶏肉を、カロリーオーバー気味なのでサラダを、など）
     """
-    response = model.generate_content(prompt)
+    # テキスト用モデルを使用
+    response = model_text.generate_content(prompt)
     return response.text
 
 def analyze_daily_summary(date_str, force=False):
-    """その日の総合評価を行う"""
+    """その日の総合評価を行う（Textモデル使用）"""
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
     
@@ -128,13 +108,10 @@ def analyze_daily_summary(date_str, force=False):
     df['日付'] = df['日付'].astype(str)
     todays_df = df[df['日付'] == date_str]
     
-    # 通常の食事だけ抽出
     meals = todays_df[todays_df['種別'].isin(['朝食', '昼食', '夕食', '間食'])]
-    
     if meals.empty:
         return None, "食事データがありません"
 
-    # AIへのプロンプト
     summary_text = meals.to_string(columns=['種別', 'メニュー名', 'カロリー(kcal)', 'タンパク質(g)', '点数'], index=False)
     
     prompt = f"""
@@ -152,7 +129,8 @@ def analyze_daily_summary(date_str, force=False):
     """
     
     try:
-        response = model.generate_content(prompt)
+        # テキスト用モデルを使用
+        response = model_text.generate_content(prompt)
         text = re.sub(r"```json|```", "", response.text).strip()
         result = json.loads(text)
         return result, "OK"
@@ -161,7 +139,7 @@ def analyze_daily_summary(date_str, force=False):
 
 # --- UI構築 ---
 
-st.title("🍽️ AI食事管理トレーナー Pro")
+st.title("🍽️ AI食事管理トレーナー (Legacy)")
 
 # 1. カレンダー
 st.sidebar.header("📅 カレンダー")
@@ -192,7 +170,7 @@ if is_today:
                 st.image(image, width=200)
 
         if st.button("記録する"):
-            with st.spinner("分析中..."):
+            with st.spinner("AIが画像を分析中..."):
                 try:
                     now_time = datetime.datetime.now(JST).strftime('%H:%M')
                     if is_skipped:
@@ -224,28 +202,22 @@ try:
         
         if not day_data.empty:
             # === データ表示 ===
-            # 数値変換と計算
             numeric_cols = ["カロリー(kcal)", "タンパク質(g)"]
             for col in numeric_cols:
                 day_data[col] = pd.to_numeric(day_data[col], errors='coerce').fillna(0)
             
-            # 通常の食事データのみ抽出（評価行を除く）
             meals_only = day_data[day_data['種別'] != '日次評価']
             
-            # テーブル表示
             display_cols = ["時刻", "種別", "メニュー名", "カロリー(kcal)", "点数", "アドバイス"]
             st.dataframe(meals_only[[c for c in display_cols if c in meals_only.columns]], hide_index=True)
             
-            # 合計表示
             total_cal = meals_only["カロリー(kcal)"].sum()
             total_pro = meals_only["タンパク質(g)"].sum()
             st.markdown(f"**合計: {int(total_cal)} kcal / タンパク質 {total_pro:.1f} g**")
             
-            # === 新機能エリア ===
             st.write("---")
             c1, c2 = st.columns(2)
             
-            # 機能1: 次の食事のアドバイス（今日の場合のみ）
             if is_today:
                 with c1:
                     if st.button("🍎 次は何食べる？"):
@@ -253,27 +225,22 @@ try:
                             advice = get_next_meal_advice(meals_only)
                             st.info(f"**次の食事へのアドバイス:**\n\n{advice}")
 
-            # 機能2: 総合評価の手動実行
             with c2:
                 if st.button("🏆 総合評価を出す"):
                     with st.spinner("1日を採点中..."):
                         res, msg = analyze_daily_summary(selected_date_str, force=True)
                         if res:
-                            # 既存の評価があれば消して上書きしたいが、簡易的に追記にする
-                            # (厳密な重複排除は複雑になるため)
                             now_time = datetime.datetime.now(JST).strftime('%H:%M')
                             eval_row = [selected_date_str, now_time, "日次評価", "総合評価", "", "", "", "", res['daily_advice'], res['daily_score']]
                             sheet.append_row(eval_row)
                             st.balloons()
                             st.success(f"評価完了！ スコア: {res['daily_score']}点")
-                            st.rerun() # 画面更新して表に反映
+                            st.rerun()
                         else:
                             st.warning(f"評価できませんでした: {msg}")
 
-            # 既に評価がある場合の表示
             daily_summary = day_data[day_data['種別'] == '日次評価']
             if not daily_summary.empty:
-                # 最新の評価を取得
                 last_eval = daily_summary.iloc[-1]
                 st.success(f"🏆 **今日の総合評価: {last_eval['点数']}点**\n\n{last_eval['アドバイス']}")
 
