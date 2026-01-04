@@ -20,7 +20,6 @@ def check_password():
     st.title("🔒 ログイン")
     password = st.text_input("パスワードを入力してください", type="password")
     
-    # ★重要：ここの "my_secret_pass" がパスワードになります。必要なら変えてください。
     if st.button("ログイン"):
         if password == st.secrets["APP_PASSWORD"]:
             st.session_state.password_correct = True
@@ -34,7 +33,7 @@ if not check_password():
 
 # --- 認証成功後のアプリ本体 ---
 
-# 1. AIの設定 (クラウドの金庫からキーを取り出す)
+# 1. AIの設定
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
@@ -43,11 +42,13 @@ except Exception as e:
     st.error("APIキーの設定が読み込めません。Streamlit Secretsを確認してください。")
     st.stop()
 
-# 2. スプレッドシートの設定 (クラウドの金庫からJSONを取り出す)
+# 2. スプレッドシートの設定 (プランB: JSON文字列として読み込む)
 try:
     SHEET_NAME = st.secrets["SHEET_NAME"]
-    # secretsから辞書データとして読み込む
-    credentials_dict = dict(st.secrets["gcp_service_account"])
+    
+    # ★ここが変更点：Secretsの "GCP_JSON" という項目を読み込む
+    credentials_dict = json.loads(st.secrets["GCP_JSON"])
+    
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     client = gspread.authorize(creds)
