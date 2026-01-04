@@ -33,7 +33,10 @@ JST = datetime.timezone(datetime.timedelta(hours=9), 'JST')
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    # ★安定稼働のため、無料枠の大きい「1.5-flash」にしています
+    # (2.5を使いたい場合はここを 'gemini-2.5-flash' に変えてください)
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     SHEET_NAME = st.secrets["SHEET_NAME"]
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
@@ -54,11 +57,20 @@ except:
 
 # --- AI分析関数 ---
 
-def analyze_meal(image, meal_type):
-    """食事画像を分析して栄養素と点数を出す"""
+def analyze_meal(image, text_input, meal_type):
+    """食事画像とテキストを分析して栄養素と点数を出す"""
+    
+    # プロンプトの組み立て
     prompt = f"""
-    この料理（{meal_type}）の栄養素を推測し、以下のJSON形式のみを出力してください。
+    あなたはプロの管理栄養士です。
+    ユーザーの食事（{meal_type}）を分析し、以下のJSON形式のみを出力してください。
     Markdownは不要です。
+    
+    【入力情報について】
+    - 画像がある場合は画像を優先して分析してください。
+    - テキスト（補足情報）がある場合は、それを加味してください。（例：「半分残した」ならカロリーを半減させる、「ごはんなし」なら炭水化物を減らす等）
+    - 画像がなくテキストのみの場合は、テキスト内容から一般的な栄養価を推測してください。
+
     "score"には、ダイエットの観点から見たこの食事の点数（0〜100点）を入れてください。
     
     {{
@@ -71,13 +83,26 @@ def analyze_meal(image, meal_type):
         "advice": "短いアドバイス"
     }}
     """
-    response = model.generate_content([prompt, image])
-    text = re.sub(r"```json|```", "", response.text).strip()
-    return json.loads(text)
+    
+    # AIに渡すデータのリスト作成
+    content_parts = [prompt]
+    
+    if image:
+        content_parts.append(image)
+    
+    if text_input:
+        content_parts.append(f"【ユーザーによる説明・補足】: {text_input}")
+
+    try:
+        response = model.generate_content(content_parts)
+        text = re.sub(r"```json|```", "", response.text).strip()
+        return json.loads(text)
+    except Exception as e:
+        st.error(f"AI分析エラー: {e}")
+        return None
 
 def get_next_meal_advice(todays_df):
     """今の栄養摂取状況から、次の食事のアドバイスをする"""
-    # データの整理
     summary_text = todays_df.to_string(columns=['種別', 'メニュー名', 'カロリー(kcal)', 'タンパク質(g)'], index=False)
     
     prompt = f"""
@@ -86,13 +111,12 @@ def get_next_meal_advice(todays_df):
     {summary_text}
     
     これを踏まえて、「次の食事で何を食べるべきか」のアドバイスを150文字以内で具体的に提案してください。
-    （例：タンパク質が足りないので鶏肉を、カロリーオーバー気味なのでサラダを、など）
     """
     response = model.generate_content(prompt)
     return response.text
 
 def analyze_daily_summary(date_str, force=False):
-    """その日の総合評価を行う（force=Trueなら3食揃ってなくても実行）"""
+    """1日の総合評価"""
     data = sheet.get_all_records()
     df = pd.DataFrame(data)
     
@@ -102,13 +126,11 @@ def analyze_daily_summary(date_str, force=False):
     df['日付'] = df['日付'].astype(str)
     todays_df = df[df['日付'] == date_str]
     
-    # 通常の食事だけ抽出
     meals = todays_df[todays_df['種別'].isin(['朝食', '昼食', '夕食', '間食'])]
     
     if meals.empty:
         return None, "食事データがありません"
 
-    # AIへのプロンプト
     summary_text = meals.to_string(columns=['種別', 'メニュー名', 'カロリー(kcal)', 'タンパク質(g)', '点数'], index=False)
     
     prompt = f"""
@@ -116,8 +138,7 @@ def analyze_daily_summary(date_str, force=False):
     
     {summary_text}
     
-    以下のJSON形式で「1日の総合評価」を出力してください。
-    Markdownは不要です。
+    以下のJSON形式で「1日の総合評価」を出力してください。Markdown不要。
     
     {{
         "daily_score": 0,
@@ -154,32 +175,44 @@ if is_today:
             is_skipped = st.checkbox("この食事は食べなかった")
 
         image = None
+        text_input = "" # 初期化
+
         if not is_skipped:
-            img_source = st.radio("入力", ["カメラ", "アルバム"], horizontal=True, label_visibility="collapsed")
+            # ★ここが変わりました：テキスト入力欄を追加
+            text_input = st.text_input("メニュー名や補足（例：牛丼並盛、ごはん半分残した等）")
+            
+            img_source = st.radio("画像の入力（任意）", ["カメラ", "アルバム", "画像なし"], horizontal=True, index=0)
+            
             if img_source == "カメラ":
                 img_file = st.camera_input("料理を撮影")
-            else:
+                if img_file: image = Image.open(img_file)
+            elif img_source == "アルバム":
                 img_file = st.file_uploader("画像をアップロード", type=["jpg", "png", "jpeg"])
-            
-            if img_file:
-                image = Image.open(img_file)
-                st.image(image, width=200)
+                if img_file: 
+                    image = Image.open(img_file)
+                    st.image(image, width=200)
+            else:
+                # 画像なしモード
+                image = None
 
         if st.button("記録する"):
-            with st.spinner("分析中..."):
+            with st.spinner("AI分析中..."):
                 try:
                     now_time = datetime.datetime.now(JST).strftime('%H:%M')
                     if is_skipped:
                         row = [selected_date_str, now_time, meal_type, "なし（欠食）", 0, 0, 0, 0, "欠食", 0]
                         sheet.append_row(row)
                         st.info(f"{meal_type}をスキップしました。")
-                    elif image:
-                        data = analyze_meal(image, meal_type)
-                        row = [selected_date_str, now_time, meal_type, data['menu'], data['calories'], data['protein'], data['fat'], data['carbs'], data['advice'], data['score']]
-                        sheet.append_row(row)
-                        st.success(f"記録完了！ {data['menu']} ({data['score']}点)")
+                    
+                    # 画像またはテキストがあれば分析へ進む
+                    elif image or text_input:
+                        data = analyze_meal(image, text_input, meal_type)
+                        if data:
+                            row = [selected_date_str, now_time, meal_type, data['menu'], data['calories'], data['protein'], data['fat'], data['carbs'], data['advice'], data['score']]
+                            sheet.append_row(row)
+                            st.success(f"記録完了！ {data['menu']} ({data['score']}点)")
                     else:
-                        st.error("画像かチェックボックスが必要です")
+                        st.error("画像を入れるか、メニュー名を入力してください！")
                         st.stop()
                 except Exception as e:
                     st.error(f"エラー: {e}")
@@ -197,29 +230,25 @@ try:
         day_data = df[df['日付'] == selected_date_str]
         
         if not day_data.empty:
-            # === データ表示 ===
             # 数値変換と計算
             numeric_cols = ["カロリー(kcal)", "タンパク質(g)"]
             for col in numeric_cols:
                 day_data[col] = pd.to_numeric(day_data[col], errors='coerce').fillna(0)
             
-            # 通常の食事データのみ抽出（評価行を除く）
             meals_only = day_data[day_data['種別'] != '日次評価']
             
-            # テーブル表示
             display_cols = ["時刻", "種別", "メニュー名", "カロリー(kcal)", "点数", "アドバイス"]
-            st.dataframe(meals_only[[c for c in display_cols if c in meals_only.columns]], hide_index=True)
+            # 存在する列だけ表示（エラー回避）
+            valid_cols = [c for c in display_cols if c in meals_only.columns]
+            st.dataframe(meals_only[valid_cols], hide_index=True)
             
-            # 合計表示
             total_cal = meals_only["カロリー(kcal)"].sum()
             total_pro = meals_only["タンパク質(g)"].sum()
             st.markdown(f"**合計: {int(total_cal)} kcal / タンパク質 {total_pro:.1f} g**")
             
-            # === 新機能エリア ===
             st.write("---")
             c1, c2 = st.columns(2)
             
-            # 機能1: 次の食事のアドバイス（今日の場合のみ）
             if is_today:
                 with c1:
                     if st.button("🍎 次は何食べる？"):
@@ -227,27 +256,22 @@ try:
                             advice = get_next_meal_advice(meals_only)
                             st.info(f"**次の食事へのアドバイス:**\n\n{advice}")
 
-            # 機能2: 総合評価の手動実行
             with c2:
                 if st.button("🏆 総合評価を出す"):
                     with st.spinner("1日を採点中..."):
                         res, msg = analyze_daily_summary(selected_date_str, force=True)
                         if res:
-                            # 既存の評価があれば消して上書きしたいが、簡易的に追記にする
-                            # (厳密な重複排除は複雑になるため)
                             now_time = datetime.datetime.now(JST).strftime('%H:%M')
                             eval_row = [selected_date_str, now_time, "日次評価", "総合評価", "", "", "", "", res['daily_advice'], res['daily_score']]
                             sheet.append_row(eval_row)
                             st.balloons()
                             st.success(f"評価完了！ スコア: {res['daily_score']}点")
-                            st.rerun() # 画面更新して表に反映
+                            st.rerun()
                         else:
                             st.warning(f"評価できませんでした: {msg}")
 
-            # 既に評価がある場合の表示
             daily_summary = day_data[day_data['種別'] == '日次評価']
             if not daily_summary.empty:
-                # 最新の評価を取得
                 last_eval = daily_summary.iloc[-1]
                 st.success(f"🏆 **今日の総合評価: {last_eval['点数']}点**\n\n{last_eval['アドバイス']}")
 
