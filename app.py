@@ -36,7 +36,7 @@ try:
     
     # ★安定稼働のため、無料枠の大きい「1.5-flash」にしています
     # (2.5を使いたい場合はここを 'gemini-2.5-flash' に変えてください)
-    model = genai.GenerativeModel('gemini-flash-latest')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     SHEET_NAME = st.secrets["SHEET_NAME"]
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
