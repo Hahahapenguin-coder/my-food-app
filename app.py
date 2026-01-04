@@ -34,7 +34,7 @@ JST = datetime.timezone(datetime.timedelta(hours=9), 'JST')
 try:
     # APIキーとモデル設定 (ひろさんのリストにあった一番安定したモデルを使用)
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-flash-latest')
+    model = genai.GenerativeModel('gemini-2.5-flash')
     
     # スプレッドシート接続
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
