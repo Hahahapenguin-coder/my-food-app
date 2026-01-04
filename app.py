@@ -33,7 +33,9 @@ JST = datetime.timezone(datetime.timedelta(hours=9), 'JST')
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # ★ここを「latest」付きの確実な名前に変更しました
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     
     SHEET_NAME = st.secrets["SHEET_NAME"]
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
