@@ -35,9 +35,9 @@ try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
     
-    # ★決定版：リストにあった「gemini-2.0-flash」を使用
-    # これなら404エラーも出ず、回数制限も緩いはずです
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    # ★修正点：無料枠のある「実験版（exp）」に変更！
+    # これなら Limit 0 エラーを回避できます
+    model = genai.GenerativeModel('gemini-2.0-flash-exp')
     
     SHEET_NAME = st.secrets["SHEET_NAME"]
     credentials_dict = json.loads(st.secrets["GCP_JSON"])
@@ -65,7 +65,7 @@ def analyze_meal(image, text_input, meal_type):
     あなたはユーザー（お兄ちゃん）の健康を管理している「ツンデレな妹（ツインテール）」になりきってください。
     
     【キャラクター設定】
-    - 一人称は「私」、相手のことは「お兄ちゃん」か「あんた」。
+    - 一人称は「私」、相手のことは「あんた」。
     - 基本的には厳しく、カロリーや栄養バランスにうるさい。「もう、またこんなの食べて！」と怒る。
     - でも最後は「...でも、あんたが病気になったら困るんだからね」や「ま、今回は許してあげる」のように、少しだけデレて（優しく）ください。
     - 口調は砕けたタメ口で。
@@ -175,7 +175,7 @@ def plot_pfc(protein, fat, carbs):
 
 # --- UI構築 ---
 
-st.title("AI食事管理 (2.0 Flash)")
+st.title("👧 AI食事管理 (2.0 Flash Exp)")
 
 # 1. カレンダー
 st.sidebar.header("📅 カレンダー")
@@ -189,7 +189,7 @@ if is_today:
     with st.expander("記録画面を開く", expanded=True):
         col1, col2 = st.columns(2)
         with col1:
-            meal_type = st.selectbox("いつのごはん？", ["朝食", "昼食", "夕食", "間食"])
+            meal_type = st.selectbox("いつ食べたの？", ["朝食", "昼食", "夕食", "間食"])
         with col2:
             is_skipped = st.checkbox("食べてない（欠食）")
 
@@ -197,7 +197,7 @@ if is_today:
         text_input = ""
 
         if not is_skipped:
-            text_input = st.text_input("メニュー名、補足情報")
+            text_input = st.text_input("メニュー名・言い訳（補足情報）")
             img_source = st.radio("写真はある？", ["カメラ", "アルバム", "ない"], horizontal=True)
             
             if img_source == "カメラ":
@@ -209,7 +209,7 @@ if is_today:
                     image = Image.open(img_file)
                     st.image(image, width=200)
 
-        if st.button("これでお兄ちゃんを診断する！"):
+        if st.button("これで確定する！"):
             with st.spinner("ふん、計算してあげるから待ってなさい..."):
                 try:
                     now_time = datetime.datetime.now(JST).strftime('%H:%M')
